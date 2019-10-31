@@ -1,0 +1,628 @@
+apiVersion: apiextensions.k8s.io/v1beta1
+kind: CustomResourceDefinition
+metadata:
+  name: scaledobjects.keda.k8s.io
+spec:
+  group: keda.k8s.io
+  version: v1alpha1
+  names:
+    kind: ScaledObject
+    plural: scaledobjects
+  scope: Namespaced
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    app: keda
+  name: keda
+  namespace: keda
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    app: keda
+  name: keda
+  namespace: keda
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+- kind: ServiceAccount
+  name: keda
+  namespace: keda
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: keda-hpa-role-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+- kind: ServiceAccount
+  name: horizontal-pod-autoscaler
+  namespace: kube-system
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: keda
+  name: keda
+  namespace: keda
+spec:
+  ports:
+  - name: https
+    port: 443
+    targetPort: 6443
+  - name: http
+    port: 80
+    targetPort: 8080
+  selector:
+    name: keda
+    instance: keda-instance
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: keda
+  name: keda
+  namespace: keda
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: keda
+      instance: keda-instance
+  template:
+    metadata:
+      labels:
+        name: keda
+        instance: keda-instance
+    spec:
+      serviceAccountName: keda
+      containers:
+      - name: keda
+        image: kedacore/keda:latest
+        imagePullPolicy: Always
+        args:
+        - --log-level=info
+        - /adapter
+        - --secure-port=6443
+        - --logtostderr=false
+        - --v=2
+        ports:
+        - containerPort: 6443
+          name: https
+        - containerPort: 8080
+          name: http
+---
+apiVersion: apiregistration.k8s.io/v1beta1
+kind: APIService
+metadata:
+  name: v1beta1.custom.metrics.k8s.io
+spec:
+  service:
+    name: keda
+    namespace: keda
+  group: custom.metrics.k8s.io
+  version: v1beta1
+  insecureSkipTLSVerify: true
+  groupPriorityMinimum: 100
+  versionPriority: 100
+---
+apiVersion: apiregistration.k8s.io/v1beta1
+kind: APIService
+metadata:
+  name: v1beta1.external.metrics.k8s.io
+spec:
+  service:
+    name: keda
+    namespace: keda
+  group: external.metrics.k8s.io
+  version: v1beta1
+  insecureSkipTLSVerify: true
+  groupPriorityMinimum: 100
+  versionPriority: 100
+---
+# Source: osiris-edge/templates/endpoints-hijacker-webhook-config.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: osiris-osiris-edge-endpoints-hijacker-cert
+  labels:
+    app.kubernetes.io/name: osiris-edge-endpoints-hijacker
+    app.kubernetes.io/instance: osiris
+data:
+  tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUdDRENDQS9DZ0F3SUJBZ0lJVS8rNFhRQUFBQUF3RFFZSktvWklodmNOQVFFTEJRQXdKekVsTUNNR0ExVUVBeE1jYjNOcGNtbHoNCkxXVnVaSEJ2YVc1MGN5MW9hV3BoWTJ0bGNpMWpZVEFlRncweE9URXdNamt3TXpFeE1UTmFGdzB5TVRFd016QXdNekV4TVROYU1EQXgNCkxqQXNCZ05WQkFNVEpXOXphWEpwY3kxdmMybHlhWE10WldSblpTMWxibVJ3YjJsdWRITXRhR2xxWVdOclpYSXdnZ0lpTUEwR0NTcUcNClNJYjNEUUVCQVFVQUE0SUNEd0F3Z2dJS0FvSUNBUUNpUFB2UTNVYVd6a1Zib1dNOXZ1cFFCUDI5d0JSK2NQbThSSjBvenQrajVaUC8NCktQRzh1VldQaENaYml3dGpIYjM0bTB0bjJMdHRPL1N4OG5vM2NCL0hzcGUyT0NvdTVDS1pmN1h5SFN2SndvSGVqSWpqYzQ0TGNJS0cNCk5GL2ZoY001U1BadjFNdisvRnU3M25CZ2QvamFHakFqdXh6amliVXBHUXFIWXJPVHNqUUJxTWNscjRrNDFrNnBLQUt2ci9QWGNDTXINCmdSSkl2ejU0dVY5UThSdU10YWw3N0I0QU1wQlprYzllVUN2NVR1aDkvYlB2dGVOUEU2VVh0N0tzWmNGeGN1cVR4YXdBNWhFSXR6N28NCnE2QStBQllLZVdPejZ0bC9UWXJIT2RYYjlGeUVjWGttZXY1ZHNpeWJJSEhZb0tXV0N3QncwRTBZekt0eTRuYTVXQnpRTTdaOUxTSjMNCnovNm51b3lUaXBQU3FDTmpzWEdqL3U2dDhjK2RyRTVsVTkrS3lkOU1hVGtZS2dMcm1xVWJKd05oZ1dHNmtCdFZNcWUxbGFWeCtISUQNCklnNVF6WWNGRUZnMERhUTkwVHE4eXc5ZjZqcmpPa1E3WHZad2NBK2hXMU1GUVlxTnFwUXlOdmtndDBHS2NIM0pXWW5ISzlxdlljdFoNCnBQQ1cyOElkK2ZteHpJcjhhYld4dVBPWFRWYU9ydXBzVTc2QTdBYVdPYkhnNzNYWFU1UGh4WTlTNmZJbUhaOGx4eGZIV2VJMENPQ3ENCmhoZkw3WnNhWk8yQTNRdlc1WUFRVEZXQm1WYmRTcHdGbDNTYi81ZUhKakkwR0xyN2s5RjRISjhpRXN5UzdnUVgxNU05bUFuRVJWdFUNCmJzZTEyWHZQaEd3ZitUVkZpRGFPVzY0OS8yd1pvd0lEQVFBQm80SUJMVENDQVNrd2dkMEdBMVVkRVFTQjFUQ0Iwb0lxYjNOcGNtbHoNCkxXOXphWEpwY3kxbFpHZGxMV1Z1WkhCdmFXNTBjeTFvYVdwaFkydGxjaTVyWldSaGdpNXZjMmx5YVhNdGIzTnBjbWx6TFdWa1oyVXQNClpXNWtjRzlwYm5SekxXaHBhbUZqYTJWeUxtdGxaR0V1YzNaamdqWnZjMmx5YVhNdGIzTnBjbWx6TFdWa1oyVXRaVzVrY0c5cGJuUnoNCkxXaHBhbUZqYTJWeUxtdGxaR0V1YzNaakxtTnNkWE4wWlhLQ1BHOXphWEpwY3kxdmMybHlhWE10WldSblpTMWxibVJ3YjJsdWRITXQNCmFHbHFZV05yWlhJdWEyVmtZUzV6ZG1NdVkyeDFjM1JsY2k1c2IyTmhiREFKQmdOVkhSTUVBakFBTUIwR0ExVWRKUVFXTUJRR0NDc0cNCkFRVUZCd01DQmdnckJnRUZCUWNEQVRBZEJnTlZIUTRFRmdRVVp6Y1RMaHpCWitqU3B5Q3VGWWRrVFZLMzE2VXdEUVlKS29aSWh2Y04NCkFRRUxCUUFEZ2dJQkFLY241RG1CLzYrdVhsWWNidHllWEFzZ3N0aWlaMW9aWVFVR1Y2WTRONHc0UEhiV2F6a3c5elRYTmFQM0xzdFENCldWMUNnd3U1VEE1N2l4b0s4MFlLRlhiL2ZWcitPTzFFWElQTldkWWpSbnJrclNTNzVGU1JxVVpNNDFqTTBzWWpYOFdsVVdldmhsb0MNCnRkUlNLUXQrb2pSK096TG9BRnVEdzgzSXV1bXJHcGExN1NGRVFDa3IxdGFqOVZKR1BxeStBaDZhL3J1WlRpdjV3Wmg1V3pJSGIrZ20NCjVmSlZPc0JVaFJrNm15WjdPd0tLV0N6K3VkajQ5aWROK3NtMm44M3hHTFFob21IN3R6akJWTWJPRmFVVFhJOC9wMU9ZSUlSM0VqcjMNCmNPcEd0a3N5RitZaFpyQytMNlNjZVR1NWRwcFQ2TG5wN2QxZVpjY0lVV2Rrb0I0TVpoYm4zUHl1WENZcXhIdEsvSXV5UWVjdU92TDYNCjFqelNUS1JrczJRaWJVSDhWd3lXeDhWQjVVTnRUYnpZOUQyS0l2RXlnQ09RdGlEV05iSnZ0enZicUd5KzVBT29ITVd4SG9zQkpQTlgNCkx1ZWxhdFhuOGVkbGg3RFlWNDVpOTlwbGkyZ0lHT3hTZk43WDdENjVoamU1cFhJUGVqNy9YaldzUE9WUjAxN3dtKy93Q2lJcWp1M3UNCjc3OU84Z2hQZmNRR3JMMmE0MVFrKzN0b1d4WlZDbitscXVmRWc3VERnb0NoRUczdDBFMXprTkp1RUIxcW5iVzdySjZud3ptR1NFQkkNCm01YkNLTFJwNkFGeUVTek9iN0ZxaEF3YlNzZzNlTTcxNDFqZXRZNGRwQUJVRzRvbE1TdUI1bEN6S2JxLzk4NU4vakl1c1dkcVlsMEYNCm1lOU9PcWJ0dUNKbwotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0t
+  tls.key: LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVktLS0tLQpNSUlKSndJQkFBS0NBZ0VBb2p6NzBOMUdsczVGVzZGalBiN3FVQVQ5dmNBVWZuRDV2RVNkS003Zm8rV1QveWp4CnZMbFZqNFFtVzRzTFl4MjkrSnRMWjlpN2JUdjBzZko2TjNBZng3S1h0amdxTHVRaW1YKzE4aDByeWNLQjNveUkKNDNPT0MzQ0NoalJmMzRYRE9VajJiOVRML3Z4YnU5NXdZSGY0Mmhvd0k3c2M0NG0xS1JrS2gyS3prN0kwQWFqSApKYStKT05aT3FTZ0NyNi96MTNBaks0RVNTTDgrZUxsZlVQRWJqTFdwZSt3ZUFES1FXWkhQWGxBcitVN29mZjJ6Cjc3WGpUeE9sRjdleXJHWEJjWExxazhXc0FPWVJDTGMrNkt1Z1BnQVdDbmxqcytyWmYwMkt4em5WMi9SY2hIRjUKSm5yK1hiSXNteUJ4MktDbGxnc0FjTkJOR015cmN1SjJ1VmdjMERPMmZTMGlkOC8rcDdxTWs0cVQwcWdqWTdGeApvLzd1cmZIUG5heE9aVlBmaXNuZlRHazVHQ29DNjVxbEd5Y0RZWUZodXBBYlZUS250WldsY2ZoeUF5SU9VTTJICkJSQllOQTJrUGRFNnZNc1BYK282NHpwRU8xNzJjSEFQb1Z0VEJVR0tqYXFVTWpiNUlMZEJpbkI5eVZtSnh5dmEKcjJITFdhVHdsdHZDSGZuNXNjeUsvR20xc2JqemwwMVdqcTdxYkZPK2dPd0dsam14NE85MTExT1Q0Y1dQVXVueQpKaDJmSmNjWHgxbmlOQWpncW9ZWHkrMmJHbVR0Z04wTDF1V0FFRXhWZ1psVzNVcWNCWmQwbS8rWGh5WXlOQmk2Cis1UFJlQnlmSWhMTWt1NEVGOWVUUFpnSnhFVmJWRzdIdGRsN3o0UnNIL2sxUllnMmpsdXVQZjlzR2FNQ0F3RUEKQVFLQ0FnQVNKeXF4K3lCYjNXYXJVd3FNclNFQXBSNVRMZnZkRGYwVGtNWFkvQlRQL084clhNUjNybkVoWnRMMwo2VDN6OEM4Q2N6WGp2Nzl4QUlWbnA4Ny9CdiszVTRkZ0x6YWhHb3U0aXk2cmtaSUZ1RXJad1BYTUpYRGVYTTl0Ci9zdy9jWE1mcE1kV1NnUXRXc1ZVNXhYQjVZcWx0TXB3SlE2ZGN4b2ZLQnNpZk92RStlcVJ5UFhIaExXZzgzSEgKd1o5VFV5ZkFrbDZORHBzaUlxdjF6Q0FiS1c5QXRrN3BlOGo3a3F6T0tOK0FHUTVpamU2N3NqaUErT1FmUS81MApBZXp2RjArbXh3bnlVT3JuQ3RjYkY0M2xjTmEwT1VRK0Zja1BKNWNBaEllanRSZjF6WWpRbFBYT1ZYTEN2eDM0Cm1ZL0RnbTRrdE1SdTJ3L1ZWNGxUaUgxcVRhNmplNC91WDZmaExlemJrYzRTL0NrSVczbzE4T0l6Vm1VazNMSGkKc2Q1Zlp6SFRsWjR3dGVZUm9vdGlmWlZuL3o3eUxYRGJLejFuNENmWDg2a044NUdITWJxbGpjN3BBbjJ0TUgrcAordHpvVS9ESEVrNzJzRGQxV0ZyemxTNFVYTzV1S1RvRGZNK2Z3NGF0dWVMZC8xQ1ozeTZwYy81RDZIZ2s4THpaCnFsUG52eGwvN0JGWVhUd0FnMTVEMXd4N3RxdDZwN1prek9zcWgvblpJWEl1am40MzhJY3ozSzViMDg0QlRjQTkKT3pRTTBNVWJPcjlHb0NhM1hsRXpkTnFRbS9aQmRHU0I2YUFIS0FMZUw2SDVtODA3MGc0WXFGRHRic2NrM2laWApObkloOGJ4VDMvMmtRMVdicUhURWgrZXZNcmxzaHpsc0pDQVdOcjcyWFhWcmFVb0ZVUUtDQVFFQTFLZW5qeVB5Ckc4YlhpcG95cHBTdjJpT1RGa0NSSUZPelZPQUZEc0toRTJoVXdWdkhkVmxYRmVLbWwrVHVYcFdqcndMZ3dtWFQKY2o2ODdKUWhJZnZpZEJJVGoyZnVpRlY4Z0Zobk1qMlJJOWtZS2Z2eWh5OWRoMGs3VFFlaDVZZ0RPZU5aeTN0aAptdGVHZ0g0d1A0TUFhRDAwSnB5dHNnMzBtYkIxaGJyelgyWE9xdno2V0ZxbmlVdUpuVDdPMy9xY0YrOTg0S3orCnVRZncvdzhXakZTeTVMZVRJM2J4QWR2RE1PR0F2eEVzMUFZc3RodHU1aUx0ai82WFZsUGYzWjNrWTdYb1FETlcKR2luNXhxeGRVM1FHMnpvMldBOUZiZGM2anhCME5lazkrK2tWdUJMRWtGVlpFOWlWL0JXUURxeUFMV2kxeXI2QgpxOFVLTHN6ZHY1Ky9hUUtDQVFFQXcwNlZaVnc2Y1lDZW9EdGlVRkxuVEpESXlHNVZrQ1R2M2IwcjZZSmR1L2k4CnhlQ0xlbEtnYW15d0ZUalhRNCtGTHVIME9rTGJMRlFwS3kzMHdhdy9XMjFYQnBqbDBSL2c2anZNTXdPZlVVc04KUE5kQmNROXZrTy9zalk0MTRxL0dQV2pUeEx4SUVhajZLZVV2VUkySys5TFJqcnIwa2IvdHl3NmM0UFBidEp6Sgo1OTk1ZWh3YXlteFpWQTZUZDJpeW4yZzRpZ0hQaDM0NXNlOXRvZVoxd1h6dXpkYjRTZEQyS2FmZ01qL01rQlByClp2VHpCb1BSTUtpY0tZcVFucEFNRENud2V3b0VHU2pEQW1KNHhZWTA4ZzNhOTVtSUpYZjNWbHMxU2UvWjQrTXEKTUh3OVhsdUpVYTc1Nlk4cDNNMVBxcGRhZk11bjhEdEwwSldGQlRQN0t3S0NBUUJrcmd1U3BYNFcwSWx6d1pXQgpjSnZoTno2SUpvR1BRSkdDK1p6clpCSkcwZnB1b1RsSndjYU5RZ1dGbkltT2xtSXNsYnc3eldIU2tRbDVLSmlYCk1sNEFmaDVzb3RRNEQrRW1FclNwQUtVYXg4bTg5dC9ZU1FDSzhJejI1MG9yRmI0UlJpWlpSRXp0dG1TanFSckcKdHdzV1R3UEYxQ0FZVUtzaHFIMjdsc3RxdXhTaHQ2dis4TXlwSCs1RFdGMHhoY0VwUStWbnFmL2ZNbmRUQ3AydQpTdHQzbGNJLzVDd3VxUkU4cjBiNUx2UitYWDRGcWU5VFhlNERZcEhiK1ZIZjVzVWV3Qno1YUZTM2huQVBNOFByCm90OHNJOTlleWJ3aFNPa2Ntcm1xWElkUUlRWjdZOGRVWGxRU0pWUzlTS2d2aWxRVks2SUdIelBkVXlpREI5TmsKeWdraEFvSUJBQmJLdE9SL1B0TEFEOExqS3pYMGRzbVltOVhJQ25RbjIxWWxIVnJDdSsyVHVYUGVJR2pGKzdKdgp2Snk5WldHYy9nM2FrSVc4QjVmRXVva3ZjOENtT1Q2U0kvWEJJaENsaDduT0FLWnpaY1EyM2ZTYnFpZG5oYjJFClFqYkN3Y2NTZkMvdWE4Z3BzTDllMk5MS3pCcTZhZDI1WEhzcmxoN3NKdlByWUtOZjBlUGg2QzRIQmtZWndZYWQKM2s3UTVLU3FzeTJuRy9IL0JCanJ3Zy9od1FtRHUzbzQraVZMVU81TVZHM0lDWUhUc0N1Z0ozaDhYV0FGUWdSTApxTzJ3SGZCakh3VE1ZQ1A3cHo3SVl2bUVSRlBJdGFVSnVPUHNKdGM0aU1TcklDemdzS3pIZGNUeXVyYW9OLzR3ClRUblVXeTVKUjJMQkJ1NUpWZS9TKzZYN3pPb3Voc0VDZ2dFQUh6elVPYmp3MzB5V3Ftd0NTTDlVZkxjbm9tZVEKMEZhM2hSdStOdm9wUUx5M3d0dnhzRzRyNnBPY1ZycXlncDBpQ1JyMDVVN25GRFcxcmdBd1dSYnhlM1VES1RzTwo0UkRFZVVHQkdnVXFoOVB6aitvTWJzU2tadzdhN3hOY3NTeGlDQXlnRExXSE5BSFZLV1dpNUlNY0UxckJtL0VECjI0MWlIcEo2d3ZrcGJoaUxoaWI4YXRpZTIycUVrUEJOR3pNeWgyRFY1cllXNlloL1ozQWJiRTNUeWJGZ3hvWFEKZS9CL1FRT0QwRk5TLzdzSUd4ejg2OFErVGhTRzdjQVlzNzQ1dmR3RHZLcTd3cTAvSHRBeSsxcnI3Q05PT2tOSwo4Y0RrVHhHSi9yVnlRTmkrbkdTUWtvVi9nUTFkZWhnQ2xEZmsvQ05ySEEzenFSdmdBd0RVQkthQ0N3PT0KLS0tLS1FTkQgUlNBIFBSSVZBVEUgS0VZLS0tLS0K
+---
+# Source: osiris-edge/templates/image-pull-secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: osiris-osiris-edge
+type: kubernetes.io/dockerconfigjson
+data:
+  .dockerconfigjson: eyJhdXRocyI6eyJvc2lyaXMuYXp1cmVjci5pbyI6eyJ1c2VybmFtZSI6ImVhZTk3NDlhLWZjY2YtNGEyNC1hYzBkLTY1MDZmZTJhNmFiMyIsInBhc3N3b3JkIjoiMmZjNmE3MjEtODVlNC00MWNhLTkzM2QtMmNhMDJlMTM5NGM0IiwiYXV0aCI6IlpXRmxPVGMwT1dFdFptTmpaaTAwWVRJMExXRmpNR1F0TmpVd05tWmxNbUUyWVdJek9qSm1ZelpoTnpJeExUZzFaVFF0TkRGallTMDVNek5rTFRKallUQXlaVEV6T1RSak5BPT0ifX19
+---
+# Source: osiris-edge/templates/proxy-injector-webhook-config.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: osiris-osiris-edge-proxy-injector-cert
+  labels:
+    app.kubernetes.io/name: osiris-edge-proxy-injector
+    app.kubernetes.io/instance: osiris
+data:
+  tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUY4RENDQTlpZ0F3SUJBZ0lJVS8rNFhRQUFBQUF3RFFZSktvWklodmNOQVFFTEJRQXdJekVoTUI4R0ExVUVBeE1ZYjNOcGNtbHoNCkxYQnliM2g1TFdsdWFtVmpkRzl5TFdOaE1CNFhEVEU1TVRBeU9UQXpNVEV4TTFvWERUSXhNVEF6TURBek1URXhNMW93TERFcU1DZ0cNCkExVUVBeE1oYjNOcGNtbHpMVzl6YVhKcGN5MWxaR2RsTFhCeWIzaDVMV2x1YW1WamRHOXlNSUlDSWpBTkJna3Foa2lHOXcwQkFRRUYNCkFBT0NBZzhBTUlJQ0NnS0NBZ0VBNCtmUUxrMUNlUHVYMnlybVpvUFh1WkU0RlVKeFRIZUF5VE92ZzQ0TlVET2xuZHZaZjFGaC9YNXcNCnZ4OGZIVHpHZkxueC81SDNpZWxNY3Q1STdJUlRaWUJqR2FXVFg2RkdqU01ta1YxaEFUckEwRTVJQnBpc2Q0WGhELzVLQjhFY0dKQTQNCnlTYkUwNi8wZDJkei9SZkNnQjI0ZjlFVTJJYlBFU2xTK2labVBHd0QxUGJIeDk2cWx0UTk3elo1U2dCajYwTHVSMGp0TCtsaC9iZmoNCnJVRktCN1FrRThGS0VtTkFNTFpZczFWTFNPVUUvcVJ5VlptNjRQclFhTjhiVGw0N0N5RlNHUk04MkRNS1l2bmZBU01IQ3pwWU9YaWYNCklkZXliK0hrazBNaTRER3hqSExlY1QySjBmNTN5d29WS2NHMGs5Y044UHVVMFp5OW5tWUVCMHNiRU5TTnp0NWlWRWhrQXhFcTJwWTMNClRDdk1ISndVQmhvaEs2WC96dit0VGFRVTFrTi96MHZlbmZXQVYxQmNUMldUY0xBYWp6b3QySEV1S0NjSlhXTW91YzFrU0xWeG5FZlINClpMY0xscEVIMU1LQjcweE9nNHpxK3RwL3p4RWpYcXg4ZHVWMDBIbEpobDVUekQyTDBjVFhicENlN2RHTFVPQjhMajQ4bDlQTmZUeTkNCjR1aC9KYTV1L0xOYUhtZjhFcDYvYW1FeGNtdlpvV05HUk5oWGdtY0VhY0t4eWNOY1hzbWFaWkJZeklaaEdjblQ5R2ZKaWxreUdMQWENClNZVmQ4NkNxYTkxbHJRS2h2Y0xQdXJkZmtxQUZpYnBtcWZoWFVNZ3dnUjVVT0FjSFJWWUljd21LdktOeFRNNysxTkpvVG00SktEUm4NCnQyL3owVHVpcklhTlNWZTRnS1VDQXdFQUFhT0NBUjB3Z2dFWk1JSE5CZ05WSFJFRWdjVXdnY0tDSm05emFYSnBjeTF2YzJseWFYTXQNClpXUm5aUzF3Y205NGVTMXBibXBsWTNSdmNpNXJaV1JoZ2lwdmMybHlhWE10YjNOcGNtbHpMV1ZrWjJVdGNISnZlSGt0YVc1cVpXTjANCmIzSXVhMlZrWVM1emRtT0NNbTl6YVhKcGN5MXZjMmx5YVhNdFpXUm5aUzF3Y205NGVTMXBibXBsWTNSdmNpNXJaV1JoTG5OMll5NWoNCmJIVnpkR1Z5Z2podmMybHlhWE10YjNOcGNtbHpMV1ZrWjJVdGNISnZlSGt0YVc1cVpXTjBiM0l1YTJWa1lTNXpkbU11WTJ4MWMzUmwNCmNpNXNiMk5oYkRBSkJnTlZIUk1FQWpBQU1CMEdBMVVkSlFRV01CUUdDQ3NHQVFVRkJ3TUNCZ2dyQmdFRkJRY0RBVEFkQmdOVkhRNEUNCkZnUVVQbnlhT2dDNkJSR1luODF6aGRpRnoxL2VzcTR3RFFZSktvWklodmNOQVFFTEJRQURnZ0lCQUxvUTE2WTAxbERmRHppbzdLZ24NCnZhVTF0K01wSlA0SWt1eTE5SlhJMzFsSmNjdHVkVExtZEd2VVRaTzZqaVRYLzJHK2JicDU5Ui8rc0g2aUpEY3NzUVdlNlpKUXRwdGoNCm5waTR4QU5QR2dhZnBWN20zcW5IdmU0MkEyeGg3Nk05OWtuQ3FJeHo4dEJzTkNoVW5ydmQ1QUpwZlIyaVh0V1l6c00rNElIcFRUaVUNCmFudzQvMnpRZFNwQkRCeHlHSTVnU3M0QkFZaXBBK0MzSTFYblBTMTYxRFM2Y0w1UkdURHpMZ1hWRkJrL0hNQjFBQ1JHUWlqNkFBUmYNCjh0NUFpdmNWaEVVZ0I5Q1JlZHdZVjI0TFU0a0VPLzV0R3J6cUNwWk5kVExFdFF3ZmpHazN3d1VTTWttSDRnQ1dWUHNWYWZxbkVFQnENClh0SVpNU2gxcWpHN2xsK0YyckxWVXVLWW1vVW01K0QvVGxEeW9CVFduMVNlWU10MFFLN2RVVGtTL09BNUlxN2NuUzhPOUdnMWJ6cWMNCkhqZVFZTm1VUURvR2xxZDI1NERNQ0RhaW0wMzVUcXlUelY4a1RzRzRkU3FIK3dSOGpLMVdLSFA0Q0xzOVRrWjJSSnBuSW1laUtpVFENCm5TNWlJU1NmOUQ0MWZKWkRtZHhzd3FkZDJ4Nk4vRXY0QlVZUkFqK3J3eDFkTHNQU2o4UDgyYm55d1NFWDQvOVJQdjQvd0pQOTdaaW8NCkZRazBvYjRyV2QzVnFSWTZoNFRoUldLUlI2empCWlk5ZjIreDFIcUthWXNCeDdYTHVxcmpYcE5jZDVvQXFOaDBYcEh5M0MyaksreWoNCklORlZGb1hDNDRzUGxOSFRNUC9oMkZBaGhpVVJ2a2xNcjZmd0RtYXFZMitZaDhRRmpvbVI5aWJjCi0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0=
+  tls.key: LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVktLS0tLQpNSUlKS1FJQkFBS0NBZ0VBNCtmUUxrMUNlUHVYMnlybVpvUFh1WkU0RlVKeFRIZUF5VE92ZzQ0TlVET2xuZHZaCmYxRmgvWDV3dng4ZkhUekdmTG54LzVIM2llbE1jdDVJN0lSVFpZQmpHYVdUWDZGR2pTTW1rVjFoQVRyQTBFNUkKQnBpc2Q0WGhELzVLQjhFY0dKQTR5U2JFMDYvMGQyZHovUmZDZ0IyNGY5RVUySWJQRVNsUytpWm1QR3dEMVBiSAp4OTZxbHRROTd6WjVTZ0JqNjBMdVIwanRMK2xoL2JmanJVRktCN1FrRThGS0VtTkFNTFpZczFWTFNPVUUvcVJ5ClZabTY0UHJRYU44YlRsNDdDeUZTR1JNODJETUtZdm5mQVNNSEN6cFlPWGlmSWRleWIrSGtrME1pNERHeGpITGUKY1QySjBmNTN5d29WS2NHMGs5Y044UHVVMFp5OW5tWUVCMHNiRU5TTnp0NWlWRWhrQXhFcTJwWTNUQ3ZNSEp3VQpCaG9oSzZYL3p2K3RUYVFVMWtOL3owdmVuZldBVjFCY1QyV1RjTEFhanpvdDJIRXVLQ2NKWFdNb3VjMWtTTFZ4Cm5FZlJaTGNMbHBFSDFNS0I3MHhPZzR6cSt0cC96eEVqWHF4OGR1VjAwSGxKaGw1VHpEMkwwY1RYYnBDZTdkR0wKVU9COExqNDhsOVBOZlR5OTR1aC9KYTV1L0xOYUhtZjhFcDYvYW1FeGNtdlpvV05HUk5oWGdtY0VhY0t4eWNOYwpYc21hWlpCWXpJWmhHY25UOUdmSmlsa3lHTEFhU1lWZDg2Q3FhOTFsclFLaHZjTFB1cmRma3FBRmlicG1xZmhYClVNZ3dnUjVVT0FjSFJWWUljd21LdktOeFRNNysxTkpvVG00SktEUm50Mi96MFR1aXJJYU5TVmU0Z0tVQ0F3RUEKQVFLQ0FnRUF6SE1nNXVpWVFVQXlzb0tCdm1WNEdSaVZYejBEdHIxZDR5Rml5bm1jcDk0dExMZ1ZIWW84aGRQdwpBUVJDUFZCUUg0UVAvRjFOMjRKVytwVStoaThQUVhjemI4YUJ0c0JQTWozZVUzbVpsQ2pJNEJYWnQxRXZKdW9MClJQV3lJOUt4Q2JnWHVSdjJacERxbGxOUVVqUUdZRGhKVXlDVnVzajA2VWhSRCtkeXY3R0dubjNrS3dFdHQ3RWUKL29HM3ZSTXNqOWl6T1cvS2w3aWVGNlhuc1gxb2xCQ2ViTHB4WUoxNDhEb2t5SHd6MVdqZVdqSGIvNzZ4VHpLeAowK0tSOUhQRU0rL29YbVpMcHdmaXdYZTIvcVlWbzVUcm9HTDlIcmNKZENVSmtMSWhqMDRGSVNITE8zc2hNQ2svCi9mMUZqdmdlcnFHMStBRTVOL0dNaVpTcStILy8vaC9MZ2UxUDl2cTdEYzJGT3czRFRxcjQ3V3ZLZExHMktIYXEKeVp0a0Z6SmhIZVdPQnl6UTNBcXNZdm9jTkNueitSTlVNdTZGY3RLUGFKK3pOd3VNK3dVT1BWSWxKK1llZTFIcgpZQ0hLQXVYOGY4VG5MTXVFNGl4N1VlcERlWk81R2JSWVBWeXB6NnhlWk91WGtpYlZvRTFrWGM5dDI2V0t3L2pQCmhtTWVCekN6MldscjVZSEZNQlRhd0FOTTd6OVNSRmFxNmZkNlhCWUJGOU9PcmtlQ2x0RnpZQ0Rhc2UwNWduWHMKNTNZbjd2Y1lINnRBTVZHV3JVbE95V0oxekNqdmJsZzcvOXZpVkFGN0RMUG1JOStlOEM4Z0FrUWFtbzdTb21xUQpZbWNsczZ4am5vWW1NUFN0MTh0S2Rtak5mRk1tMi80VnlxcUgyajlnY2F1VzRNbXY5QUVDZ2dFQkFQT3FKYlpBCmF1YVNkMFVwMjFqa0tDNyttOE5ja0NjRHJKQWNlT0RMM2llc2o0V21BdUt5cjVVY215TkZyZysxaStFVXRUeXQKeTNtanhUejRUenpsWUtkaXhWb2MrcjNzcTUyRlQxc2kxQlU3QzNOd3VJRjc0VzMvZHdPT25EeGVWL2Q1bHdEWQpRNXZOcWtHbGw4U2NzVjQ0b2kvMVZOb2UvVTNUeDdBQ0RaRkx0VnE3T2hZRS9jRVh0SERYT2hGS0RlRXVwODBlCnk3SWRGbUF4ajZWdXZ0aGl1SmtBY2o2YngvZHB0RFpoVlYyTG9KdnlLUHlNWGdQTmo4R05aL2x0RGRrWGoxRkkKMTBxSjg2WVZ1SnJ1OUxJZ21ZRzg1THFrUWFTMlJoYmh2Lzh3aUFhQTdyYmxlcERqWmFmVEhwQS9QOW8yRTVMNgp3WUJya1U4L3B0R1pWU0VDZ2dFQkFPOXhiaTJYNE1RbDRPVSs3am9wZFlJVSszcVlDYXBWU3NjVDdma1BaKzc2Cktha1NmUjFmQjZhdklLVlhYRTBXZktmelFlUGxJcEI5YWYxWkt5TWxNQWpnN3E1QzJ6N1U3OG5VRndMOTQ1Y0YKS3JIYkxGTi81bEMvd0FLZW1kdnJWOU5rM3VFRkM1L2ZNd3RZcXhUSWFsak5TYUVNSVZwU2oxdytDaURIbUNjegpTc3E4Mm9Cdm9ZdXhucTNDdEo2WEszdk1sZ0pmZTVLNlJ3SHRCVG40TC9kVDFTQjlFeElJblZJNDY4Zk1WRG1JClNnY2hhejlJSWlIUWJIOEZEQ0VLZWhoVEtxYmFQZXhQbStDSzJxZ2FLOFUzVXJ4YkdUVzVkVHkydWNsZ0IrUDIKTmlSK2IwendYcFlvemFpWS94aFUrS3NTZnArZU9nWWlCdHJpYmZTMzl3VUNnZ0VBTUdLN05tTzRWcTBERGpMdgpvY2s4eVlnNXVpT3BaSFh3VUhXMjh6eklrcXhMbThpSmppYlpnd3k1S2RudVpLUXljTEhDQTVpbmJUSStPb3M4CmdPVXp1a2w4MHhZcUhJamcwMWpqbHo5bFNnbjlqaUQySXBCTkJhRFRLMXVvWHJ5RlQxbFB5UlVvNThtQlk2UFUKYlhDSU1DT2k0VThnV0dnSytPZHpJZHBtZzFHN1k1Y0dROVVkNXJna1Zyd0doZVJrdVRDZ2xiVGwwaXJBaEwyUwp2dEV0Q0o4aDlSQUhuN01qbEZmak4yRkFxR0RQdGVmeWg2UUFEMVZFbExUVnpzdi9FZnNCdEt4NFJBNzgyU0E3CkZsa1pNajRTL1paYS9VMGMwKzUySUprWG5UOHY0OHE2bklzWk9haE9TWE05QUh2dTNCQWM5dlRnYy9Yb1Z3cFcKd0F4b3dRS0NBUUVBMmloUUNVeHFwbXdZbHVZYWFYV2lzYTFxWHcwdEtUdGkwVFZRU2U4R2RBOExiQmNEVllKaQoxelNTbXZLWWowZmd0YWtHTEp4MVBJNTN4ak83QU45OS8yanBMbTZOa1phekR3R2xJYjJ1NGNiOFdtWGw0Z0lUCkZ4bE4yVlVsdStDVitXM2JQOHU0QnFaMnZHekNHMEpxMnBQWDlOcTNmTExpR1ZvUklrS1lWNGI5S3ZDY2FBN04KY2hpWUNacnZzOXJwN0hhL2FsUVNvK0lDbGplYzNtOUpUSi9kL0NiWS9FSkxERUgrV09ETEVFd2pucEdOUkcvMQpZVGVqMHFzSG5RY05yU0lCSjFxS3RzYmxyOVR6V2R2V2EyNTNmRlBJQ1ZIN0JpRTU3c2NIQ1dVbmVXS1ZCOVd0CmFFU3U5R0RKY3lMZ0dnWFV4cHVFSkZoV1JKR3ZPeHR0L1FLQ0FRQUdWeEJQUTVmS1JMYXpTV2ZIczJTMFhMeXoKbHpHQmR6bVVOVXduUGc0WlZXMmp0ZFZJUXM1L1p2MkpRWTBDai9GWHFGdm1iTHVWaVlNMnJMWVdncm9QbVNCRApHd3h2eUZKNGlyY2dOejJHeFUzTkp2VDJ1ZytDTzVuTnhJV2Y0cDNrTEl4YnVnSEUwSk5ZQUJhWC9Hd1RRb0dnCnFpa21HY05tUGZkbUNCVktqTzdQcU5wY01SK1FaUW9VNXVVVGJqRlFKQlU1MWJOTFVvVlhpR01LdldBKzdFb3AKYUpVQ0VpZ2pnbFFnc0cvVEhtaTk5UVVnRUo0bldTRXE4Y1NDb0VmK3pZMmx3KzlYcEVCcmVTT29ocHFPbEV5cQphSlhObE1EMjJZaDFWaERrSHNVZGpCQ1FSUEN5Qm95NG5XNDAwU2MrbUtnS1Y5REN2Vjc5L25zSkdobzEKLS0tLS1FTkQgUlNBIFBSSVZBVEUgS0VZLS0tLS0K
+---
+# Source: osiris-edge/templates/service-account.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: osiris-osiris-edge
+  labels:
+    app.kubernetes.io/name: osiris-edge
+    app.kubernetes.io/instance: osiris
+---
+# Source: osiris-edge/templates/cluster-role.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: osiris-osiris-edge
+  labels:
+    app.kubernetes.io/name: osiris-edge
+    app.kubernetes.io/instance: osiris
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  - pods
+  - services
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - endpoints
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - get
+  - list
+  - watch
+  - update
+  - patch
+---
+# Source: osiris-edge/templates/cluster-role-binding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: osiris-osiris-edge
+  labels:
+    app.kubernetes.io/name: osiris-edge
+    app.kubernetes.io/instance: osiris
+subjects:
+- kind: ServiceAccount
+  name: osiris-osiris-edge
+  namespace: keda
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: osiris-osiris-edge
+---
+# Source: osiris-edge/templates/endpoints-hijacker-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: osiris-osiris-edge-endpoints-hijacker
+  labels:
+    app.kubernetes.io/name: osiris-edge-endpoints-hijacker
+    app.kubernetes.io/instance: osiris
+spec:
+  type: ClusterIP
+  ports:
+  - port: 443
+    targetPort: https
+    protocol: TCP
+    name: https
+  selector:
+    app.kubernetes.io/name: osiris-edge-endpoints-hijacker
+    app.kubernetes.io/instance: osiris
+---
+# Source: osiris-edge/templates/proxy-injector-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: osiris-osiris-edge-proxy-injector
+  labels:
+    app.kubernetes.io/name: osiris-edge-proxy-injector
+    app.kubernetes.io/instance: osiris
+spec:
+  type: ClusterIP
+  ports:
+  - port: 443
+    targetPort: https
+    protocol: TCP
+    name: https
+  selector:
+    app.kubernetes.io/name: osiris-edge-proxy-injector
+    app.kubernetes.io/instance: osiris
+---
+# Source: osiris-edge/templates/activator-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: osiris-osiris-edge-activator
+  labels:
+    app.kubernetes.io/name: osiris-edge-activator
+    app.kubernetes.io/instance: osiris
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: osiris-edge-activator
+      app.kubernetes.io/instance: osiris
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: osiris-edge-activator
+        app.kubernetes.io/instance: osiris
+    spec:
+      serviceAccountName: osiris-osiris-edge
+      imagePullSecrets:
+      - name: osiris-osiris-edge
+      containers:
+      - name: activator
+        image: osiris.azurecr.io/osiris:6b69328
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          runAsUser: 1000
+        command:
+        - /osiris/bin/osiris
+        args:
+        - --logtostderr=true
+        - activator
+        ports:
+        - name: proxy
+          containerPort: 5000
+          protocol: TCP
+        - name: healthz
+          containerPort: 5001
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            port: healthz
+            path: /healthz
+        readinessProbe:
+          httpGet:
+            port: healthz
+            path: /healthz
+        resources:
+            {}
+---
+# Source: osiris-edge/templates/endpoints-controller-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: osiris-osiris-edge-endpoints-controller
+  labels:
+    app.kubernetes.io/name: osiris-edge-endpoints-controller
+    app.kubernetes.io/instance: osiris
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: osiris-edge-endpoints-controller
+      app.kubernetes.io/instance: osiris
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: osiris-edge-endpoints-controller
+        app.kubernetes.io/instance: osiris
+    spec:
+      serviceAccountName: osiris-osiris-edge
+      imagePullSecrets:
+      - name: osiris-osiris-edge
+      containers:
+      - name: endpoints-controller
+        image: osiris.azurecr.io/osiris:6b69328
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          runAsUser: 1000
+        command:
+        - /osiris/bin/osiris
+        args:
+        - --logtostderr=true
+        - endpoints-controller
+        env:
+        - name: OSIRIS_NAMESPACE
+          value: keda
+        - name: ACTIVATOR_POD_LABEL_SELECTOR_KEY
+          value: app.kubernetes.io/name
+        - name: ACTIVATOR_POD_LABEL_SELECTOR_VALUE
+          value: osiris-edge-activator
+        ports:
+        - name: healthz
+          containerPort: 5000
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            port: healthz
+            path: /healthz
+        readinessProbe:
+          httpGet:
+            port: healthz
+            path: /healthz
+        resources:
+            {}
+---
+# Source: osiris-edge/templates/endpoints-hijacker-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: osiris-osiris-edge-endpoints-hijacker
+  labels:
+    app.kubernetes.io/name: osiris-edge-endpoints-hijacker
+    app.kubernetes.io/instance: osiris
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: osiris-edge-endpoints-hijacker
+      app.kubernetes.io/instance: osiris
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: osiris-edge-endpoints-hijacker
+        app.kubernetes.io/instance: osiris
+        releaseRevision: "1"
+    spec:
+      serviceAccountName: osiris-osiris-edge
+      imagePullSecrets:
+      - name: osiris-osiris-edge
+      containers:
+      - name: endpoints-hijacker
+        image: osiris.azurecr.io/osiris:6b69328
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          runAsUser: 1000
+        command:
+        - /osiris/bin/osiris
+        args:
+        - --logtostderr=true
+        - endpoints-hijacker
+        env:
+        - name: TLS_CERT_FILE
+          value: /osiris/cert/tls.crt
+        - name: TLS_KEY_FILE
+          value: /osiris/cert/tls.key
+        ports:
+        - name: https
+          containerPort: 5000
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            port: https
+            scheme: HTTPS
+            path: /healthz
+        readinessProbe:
+          httpGet:
+            port: https
+            scheme: HTTPS
+            path: /healthz
+        volumeMounts:
+          - name: cert
+            mountPath: /osiris/cert
+            readOnly: true
+        resources:
+            {}
+
+      volumes:
+      - name: cert
+        secret:
+          secretName: osiris-osiris-edge-endpoints-hijacker-cert
+---
+# Source: osiris-edge/templates/proxy-injector-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: osiris-osiris-edge-proxy-injector
+  labels:
+    app.kubernetes.io/name: osiris-edge-proxy-injector
+    app.kubernetes.io/instance: osiris
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: osiris-edge-proxy-injector
+      app.kubernetes.io/instance: osiris
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: osiris-edge-proxy-injector
+        app.kubernetes.io/instance: osiris
+        releaseRevision: "1"
+    spec:
+      serviceAccountName: osiris-osiris-edge
+      imagePullSecrets:
+      - name: osiris-osiris-edge
+      containers:
+      - name: proxy-injector
+        image: osiris.azurecr.io/osiris:6b69328
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          runAsUser: 1000
+        command:
+        - /osiris/bin/osiris
+        args:
+        - --logtostderr=true
+        - proxy-injector
+        env:
+        - name: TLS_CERT_FILE
+          value: /osiris/cert/tls.crt
+        - name: TLS_KEY_FILE
+          value: /osiris/cert/tls.key
+        - name: PROXY_IMAGE
+          value: osiris.azurecr.io/osiris:6b69328
+        - name: PROXY_IMAGE_PULL_POLICY
+          value: IfNotPresent
+        ports:
+        - name: https
+          containerPort: 5000
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            port: https
+            scheme: HTTPS
+            path: /healthz
+        readinessProbe:
+          httpGet:
+            port: https
+            scheme: HTTPS
+            path: /healthz
+        volumeMounts:
+        - name: cert
+          mountPath: /osiris/cert
+          readOnly: true
+        resources:
+            {}
+
+      volumes:
+      - name: cert
+        secret:
+          secretName: osiris-osiris-edge-proxy-injector-cert
+---
+# Source: osiris-edge/templates/zeroscaler-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: osiris-osiris-edge-zeroscaler
+  labels:
+    app.kubernetes.io/name: osiris-edge-zeroscaler
+    app.kubernetes.io/instance: osiris
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: osiris-edge-zeroscaler
+      app.kubernetes.io/instance: osiris
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: osiris-edge-zeroscaler
+        app.kubernetes.io/instance: osiris
+    spec:
+      serviceAccountName: osiris-osiris-edge
+      imagePullSecrets:
+      - name: osiris-osiris-edge
+      containers:
+      - name: zeroscaler
+        image: osiris.azurecr.io/osiris:6b69328
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          runAsUser: 1000
+        command:
+        - /osiris/bin/osiris
+        args:
+        - --logtostderr=true
+        - zeroscaler
+        env:
+        - name: METRICS_CHECK_INTERVAL
+          value: "150"
+        ports:
+        - name: healthz
+          containerPort: 5000
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            port: healthz
+            path: /healthz
+        readinessProbe:
+          httpGet:
+            port: healthz
+            path: /healthz
+        resources:
+            {}
+---
+# Source: osiris-edge/templates/endpoints-hijacker-webhook-config.yaml
+apiVersion: admissionregistration.k8s.io/v1beta1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: osiris-osiris-edge-endpoints-hijacker
+  labels:
+    app.kubernetes.io/name: osiris-edge-endpoints-hijacker
+    app.kubernetes.io/instance: osiris
+webhooks:
+- name: endpoints-hijacker.osiris.deislabs.io
+  clientConfig:
+    service:
+      namespace: keda
+      name: osiris-osiris-edge-endpoints-hijacker
+      path: "/mutate"
+    caBundle: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUZFakNDQXZxZ0F3SUJBZ0lJS1EyRlQ0V3dDMWt3RFFZSktvWklodmNOQVFFTEJRQXdKekVsTUNNR0ExVUVBeE1jYjNOcGNtbHoNCkxXVnVaSEJ2YVc1MGN5MW9hV3BoWTJ0bGNpMWpZVEFlRncweE9URXdNamt3TXpFeE1UTmFGdzB5TVRFd016QXdNekV4TVROYU1DY3gNCkpUQWpCZ05WQkFNVEhHOXphWEpwY3kxbGJtUndiMmx1ZEhNdGFHbHFZV05yWlhJdFkyRXdnZ0lpTUEwR0NTcUdTSWIzRFFFQkFRVUENCkE0SUNEd0F3Z2dJS0FvSUNBUURpN2ViWHRJcTZlWWRkbDlJUVA3OGpXeDFXVXEvVG51c3lSVkFhMDZId0ZoUmpKUmdpbVhmUGN3MXgNCjNxbFJEN2w5dk5XWkYrUHVDL20venFGR3hvVXp2SjRyenRtcXZWYXVjendad2FETGZUdFMyT2c1WVJGbFJmL2ZaWjNYSnU1M3d5ei8NCmowby80TTdYVnJvVDZZWVJadExJbXU2dTNyK2UzaU1GL0hCNGhkNklUUUd1OFgzbXdLVEVxc1RBU1M2VVhydCtGR1c3aWU4NTZ0Z0oNCk11RUlzaldPMGhQYU1iRkRKZmF6cXcvaHJTSUt2eG9FZWswNEJ3ekpEdi8rQ3hvUDZNRWlYbTNsQjY4dG8vMXBRRzJFVit5RnJtQ1ENCmtZcFpwL00vZnk3ZzFNbE9UZTMwMUpGa09aRnhuSGRRNlFZVmJqYmZpL0t3ME1WejRSL0RZdnpLOGFPS3YwbE5EOU1XdG1GcEJaWkQNCjBIQkthN1F3T0JERUVjdlU4NnNhVE8rWEcyWEVJVnltbHJYaDR5NzAyVElqaHIvc2pVYkpodk8vSzhud0wvWFFvVTNXZkNFMVpoRzYNCjZBTzNCNFVRa3FkRGZORDdtaktrb3M2QkpNcVNHSUc4dXJsNnk5N2RHR0Q5amtjN0szWlhrZHQxaXJ2cTlmT00xZmRpU3VlZDl2VHUNCjNwaUkyTVFVc09zeXRsellBRE5LZWZibXVxTkFEckVuTlV3MUgrTURGL1EwSXMxV3lHaFgyV2F4OHovTi9ydGRqdTRwc2JnWXIyMkoNCm00aE5pcTFVUWE2SFQ0cmorZUdkVDZuSlJ5ZjBtckRmYXYrUHZBL1hTM0d2NHlSc0lPU0ZlSk55Mis1RDBSUFRITlBjWlMvYnRHc3ANCjg2VS9aTG9UaS9sN1M1QnE3d0lEQVFBQm8wSXdRREFQQmdOVkhSTUJBZjhFQlRBREFRSC9NQTRHQTFVZER3RUIvd1FFQXdJQ0JEQWQNCkJnTlZIUTRFRmdRVS9pK1lDOFovSFowNVhmT0RCeW1Md29weGhHY3dEUVlKS29aSWh2Y05BUUVMQlFBRGdnSUJBTTNBbHFtLzR1dmYNCkx2SUNJblo5QS9uOHZtdzkrQjZUVktPRUZhM3pKR21FTjJ6NVZ1NWxoSlhnQzNlTXdTZGJIQkl2Wnh5MTJSSmJzMXUvRStTdGxTNjYNCmtNL292dFFLVmdzejdBMHNKNVM0eVhsSmpid1ZQL1piNXNmSUVYSnRPUHRiSkZsTVpQNXVzWVppcjFYRldvd1FFeUlVbUprWjRPY28NCjc2RS80dGxySElTVkdZWnpiSDFwelZvMHBUZ3oyNmVpU09nV1JqcEZOU3YzdnpUdzIvYWNVSU84dHF6T3JLTGd0aGRmZU13TDBWWHcNCkdPc3puTTJNSE44Rk9ubmJqSGJOMVBMckdtT0w4bGphQ1F1c3JoL2FhcUtqQTBWSW9uVE5YTjU5L1FRMjFGYkFZaGdTS1c0cWJENzMNClgrcGRsTUhGME5Jb1Q5S1pFdWlTVEc3Nk0xNjVtN0cyTk43d0VGVVdFZjAvUFZhZzY4QkVzVTI4YkNBd0FjK09FWGx2MEt1SFFEYmsNClRJTmxQcGpwa3FjeTNmcFhjelhPNkc0SlhYTWxMVnI5Z1VUc1BuWS9hL0w5MXFqazlmVitJV3VmOHVJanlNUmEwUW4rZmY4UUNUcG0NCjhJZjZwcGROSWJpT0hKT2tjYkNtQ01NUGhCZEhIbXRGd2s4Y2FDYjBHU001THE3ZVlMNUJ5Y1dnb3pPa21BSVV1NVhGUEg2RmRQM0ENCjMySFFlTEhaY0FjT2VmMmhib3lSMnBJVmVnSDIwaHhCWVJneXltcWNXQytiZUxNcExlVENwbkJmTzlRNzlpVGl1eGhBQjB3NnVsSTkNCnZ6aWwyNGhYMXN2c2pINkMyYnAzbm1aVlBTenk5eW1IZnJrOHo5N0ZzYmoxZHhZaXVMSDRsQjdBRlk1dXUrbi8KLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQ==
+  rules:
+  - apiGroups:
+    - ""
+    apiVersions:
+    - v1
+    resources:
+    - services
+    operations:
+    - CREATE
+    - UPDATE
+  failurePolicy: Ignore
+---
+# Source: osiris-edge/templates/proxy-injector-webhook-config.yaml
+apiVersion: admissionregistration.k8s.io/v1beta1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: osiris-osiris-edge-proxy-injector
+  labels:
+    app.kubernetes.io/name: osiris-edge-proxy-injector
+    app.kubernetes.io/instance: osiris
+webhooks:
+- name: proxy-injector.osiris.deislabs.io
+  clientConfig:
+    service:
+      namespace: keda
+      name: osiris-osiris-edge-proxy-injector
+      path: "/mutate"
+    caBundle: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUZDekNDQXZPZ0F3SUJBZ0lKQVBCSEVETG1TaktlTUEwR0NTcUdTSWIzRFFFQkN3VUFNQ014SVRBZkJnTlZCQU1UR0c5emFYSnANCmN5MXdjbTk0ZVMxcGJtcGxZM1J2Y2kxallUQWVGdzB4T1RFd01qa3dNekV4TVROYUZ3MHlNVEV3TXpBd016RXhNVE5hTUNNeElUQWYNCkJnTlZCQU1UR0c5emFYSnBjeTF3Y205NGVTMXBibXBsWTNSdmNpMWpZVENDQWlJd0RRWUpLb1pJaHZjTkFRRUJCUUFEZ2dJUEFEQ0MNCkFnb0NnZ0lCQU1sUGthQ0tMNWp0VGRvRXFLRnVaM2Q0bFJ5NDhXbHhQbFpQR2RoRGR1RlU3aldUYUd4VjlRWkdYa2srYjQzZWx3Q0kNCnNHV290TlNFYzVtdHVoTDdzV2U3eCsvUXZ3eEVzbThYVE1Da1dxVjEwV1BuRnpSNlZsOFQ4NCtqQ1kzTEVobTh0NC9MQTdDSTFFU1oNClgvNE5sOFR3Q2dFbVNtQ0x0UGpDZnFkdDM5YW5GOTYwaVkvK2dJNDRYWnNBank4SndpN3UxRERiY2dqRkt4eHlTb0R0alhPUTRFTFoNClFZblhzMCtPUXJyT2tleFpZa0lFbkNkNDFOMXdSeDBuWUJYa1pXNERkZCtGWXFCRmJ6cWJEazhVb25yVDYxc3RsWExJQ2hGOEU0RG8NCjJ5ZlVMcm5iUzgySzJENThkU0ZDeVl5UHZtc0V4WGM3YUJBZ1lyd1ByeHJKcGt5WXJ5R090M3laKzkwVm5nZzhiV29mNlFXbWtRVW4NCnRaNENEN2ZjeU5NWFQvbUhtZ2lzQ1JHU3hJaktNSEYzeW95akdmcm96dm4wVnp5WkI1R2xpQStOWDFrc0NBNkRZdkVpTDl4dCtZTkQNCmRhcHdyZU0ycEc1MUVyNWxkZDV1N2R5MnhyNDludDQrN0lwNDNqYXJWdEdFN3NIZHdBamtWdXU3MWZvdlZNQ1NyWkdiNkNLSWZPMlANClpIWG1TWWJGSHdUTWREUGJBWEd6N3FWODZRamFVbWNWeVUyQnhZN08yY1BnRllZYXNtcWpYY0hVWnpTdDQzVDRoa0dGY2paayt5Z2gNCnJ6VWpTSnNobStXekJGdExYTHNNVXMvV0NGYWtBMjBQcUNoblhaZUZsODJuTHB5cUJuc1k1SHQzVEY1QWQzdzlCeGFVZ3FOY2hjWjMNCnVOa3llZElwQWdNQkFBR2pRakJBTUE4R0ExVWRFd0VCL3dRRk1BTUJBZjh3RGdZRFZSMFBBUUgvQkFRREFnSUVNQjBHQTFVZERnUVcNCkJCUlNBOFNGcmg0NnJqUXdhcUdaSzdtL2dvdCttekFOQmdrcWhraUc5dzBCQVFzRkFBT0NBZ0VBdk9MdmxaMCtSZWF1VTY4dnBwaVMNCkF2bW92L2tqeERBQlBvbGtiNlovSGw4b2R6SWVqNFd0eElmSUg4UWNFUzl6YkZRYXZMTHNMZk5Cd2lmdDZudGlYOE9TcFRkUmxYZW8NCk1tOVp4UGlQUzlkYUV6bm1SUHFQRDMxWGVMbkp4c0gzM2NRVEZhRHVTd0N5NXlNVUZNN2dlQTBoVE1vVWJCL25mY21rOGxjZ21jOFQNClRhUkdtMW9aWjVwM2ZTVHl2aEc0TitmYzNNTUE4ckZ5cW5aQjZRVS9VRExYRmJQM0lUZ3ZaYkkwa0FZTHdiR0NId2JRZzhPRXpHbkMNCkpaRXJjZ3NUdUlRWjBGNUIrdFZYdFp3UDBrZisxZHduZGxLSkQ1V1ZqTEY5Ni9OYk5XVyt3K0FUa2ZrM0JsVnRDdnFJZUhIR1cvU1cNClEwT0dVUnhvODI3VTFYM2g4SDJvUzJoVFhKeTdXMGxuUHBiVHZzZHlaUFp0ZE8yTnRyVUh5b2Vmc081TXJkaUVHU3o4cnp1aDJKdm4NCndEM0w5Mi9kcHlLUWhJa0hwbzE3Nmo1QTBzYnk3anhoSTF5ckUrYlJjT0hoSWxxOU1xclFHZXdyczZjcjEwUGVrdnIxckNmb09Xb28NCitCMXdxR1RLNlc4aWkyM29qeDZISkJJVnJzRGsxUGtnSElZSmxTNm4yeEU3SDlQZStCYkFQamEwUERWcVcrdTY0YTNXZ2lIVUNydUQNCkRCZmQreTU5VzZydXlQaDhFRG41Y2pHdGswVWVxVUo0YytnaGtNRDF0a2VaWjJrMkRCcDViWVgrT2RDUGQzU2t3VjlEaE9SL01KM1ENClI2cGVCeXoyOXVLSjF4Znp4ekhJSjR6cHhFL2cwMzhHMTVqRTByalA4RVBxeXhsS2RJRnhiTGs9Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0=
+  rules:
+  - apiGroups:
+    - apps
+    apiVersions:
+    - v1
+    resources:
+    - deployments
+    operations:
+    - CREATE
+    - UPDATE
+  - apiGroups:
+    - ""
+    apiVersions:
+    - v1
+    resources:
+    - pods
+    operations:
+    - CREATE
+  failurePolicy: Ignore

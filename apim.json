@@ -1,0 +1,111 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "apiManagementName": {
+            "type": "String"
+        },
+        "publisherEmail": {
+            "type": "String"
+        },
+        "publisherName": {
+            "type": "String"
+        },
+        "subnetResourceId": {
+            "type": "String"
+        },
+        "echoServiceIP": {
+            "type": "String"
+        },
+        "ipFilterStartAddress": {
+            "type": "String"
+        },
+        "ipFilterEndAddress": {
+            "type": "String"
+        }
+    },
+    "variables": {},
+    "resources": [
+        {
+            "type": "Microsoft.ApiManagement/service",
+            "apiVersion": "2019-01-01",
+            "name": "[parameters('apiManagementName')]",
+            "location": "Australia East",
+            "sku": {
+                "name": "Developer",
+                "capacity": 1
+            },
+            "properties": {
+                "publisherEmail": "[parameters('publisherEmail')]",
+                "publisherName": "[parameters('publisherName')]",
+                "notificationSenderEmail": "apimgmt-noreply@mail.windowsazure.com",
+                "virtualNetworkConfiguration": {
+                    "subnetResourceId": "[parameters('subnetResourceId')]"
+                },
+                "virtualNetworkType": "External"
+            }
+        },
+        {
+            "type": "Microsoft.ApiManagement/service/apis",
+            "apiVersion": "2019-01-01",
+            "name": "[concat(parameters('apiManagementName'), '/kubeecho')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service', parameters('apiManagementName'))]"
+            ],
+            "properties": {
+                "displayName": "KubeEcho",
+                "apiRevision": "1",
+                "subscriptionRequired": false,
+                "serviceUrl": "[concat('http://',parameters('echoServiceIP'),'/api/echo')]",
+                "protocols": [
+                    "http",
+                    "https"
+                ],
+                "path": ""
+            }
+        },
+        {
+            "type": "Microsoft.ApiManagement/service/apis/operations",
+            "apiVersion": "2019-01-01",
+            "name": "[concat(parameters('apiManagementName'), '/kubeecho/default')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apiManagementName'), 'kubeecho')]",
+                "[resourceId('Microsoft.ApiManagement/service', parameters('apiManagementName'))]"
+            ],
+            "properties": {
+                "displayName": "Default",
+                "method": "GET",
+                "urlTemplate": "/",
+                "templateParameters": [],
+                "responses": []
+            }
+        },
+        {
+            "type": "Microsoft.ApiManagement/service/apis/policies",
+            "apiVersion": "2019-01-01",
+            "name": "[concat(parameters('apiManagementName'), '/kubeecho/policy')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apiManagementName'), 'kubeecho')]",
+                "[resourceId('Microsoft.ApiManagement/service', parameters('apiManagementName'))]"
+            ],
+            "properties": {
+                "value": "[concat('<policies>\r\n  <inbound>\r\n    <base />\r\n    <ip-filter action=\"allow\">\r\n      <address-range from=\"',parameters('ipFilterStartAddress'),'\" to=\"',parameters('ipFilterEndAddress'),'\" />\r\n    </ip-filter>\r\n  </inbound>\r\n  <backend>\r\n    <base />\r\n  </backend>\r\n  <outbound>\r\n    <base />\r\n  </outbound>\r\n  <on-error>\r\n    <base />\r\n  </on-error>\r\n</policies>')]",
+                "format": "xml"
+            }
+        },
+        {
+            "type": "Microsoft.ApiManagement/service/apis/operations/policies",
+            "apiVersion": "2019-01-01",
+            "name": "[concat(parameters('apiManagementName'), '/kubeecho/default/policy')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service/apis/operations', parameters('apiManagementName'), 'kubeecho', 'default')]",
+                "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apiManagementName'), 'kubeecho')]",
+                "[resourceId('Microsoft.ApiManagement/service', parameters('apiManagementName'))]"
+            ],
+            "properties": {
+                "value": "<policies>\r\n  <inbound>\r\n    <set-query-parameter name=\"message\" exists-action=\"override\">\r\n      <value>Much success!</value>\r\n    </set-query-parameter>\r\n    <base />\r\n  </inbound>\r\n  <backend>\r\n    <base />\r\n  </backend>\r\n  <outbound>\r\n    <base />\r\n  </outbound>\r\n  <on-error>\r\n    <base />\r\n  </on-error>\r\n</policies>",
+                "format": "xml"
+            }
+        }
+    ]
+}
