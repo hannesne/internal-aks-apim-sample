@@ -22,7 +22,7 @@ echo "create apim subnet"
 az network vnet subnet create -n $apimSubnet --vnet-name $aksVnet -g $resourceGroup --address-prefixes $apimAdressPrefixes
 
 echo "retrieve networking ids"
-vnetId=$(az network vnet show --resource-group $resourceGroup --name $aksVnet --query id -o tsv)
+
 aksSubnetId=$(az network vnet subnet show --resource-group $resourceGroup --vnet-name $aksVnet --name $aksSubnet --query id -o tsv)
 apimSubnetId=$(az network vnet subnet show --resource-group $resourceGroup --vnet-name $aksVnet --name $apimSubnet --query id -o tsv)
 
@@ -30,7 +30,8 @@ echo "create service principal for aks to control vnet"
 servicePrincipalId=$(az ad sp create-for-rbac --skip-assignment -o tsv --query appId)
 servicePrincipalPassword=$(uuidgen)
 az ad sp credential reset --name $servicePrincipalId --password $servicePrincipalPassword
-az role assignment create --assignee $servicePrincipalId --scope $vnetId --role Contributor
+az role assignment create --assignee-object-id $servicePrincipalId --scope $vnetId --role Contributor --assignee-principal-type ServicePrincipal
+sleep 30s #give sp creation some more time to finish propagation
 
 echo "create aks instance"
 az aks create \
